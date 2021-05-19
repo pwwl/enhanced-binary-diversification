@@ -1,0 +1,156 @@
+# Copyright (c) 2021, Mahmood Sharif, Keane Lucas, Michael K. Reiter, Lujo Bauer, and Saurabh Shintre
+# This file is code used in Malware Makeover
+
+"""
+Randomize multiple binaries to test that randomization
+doesn't break functionality.
+"""
+
+import random
+import time
+random.seed(time.time())
+
+import sys
+sys.path.append('orp')
+
+import peLib
+import copy
+
+import func
+import inp
+import swap
+import reorder
+import equiv
+import preserv
+import disp
+import semnops
+from randtoolkit import reanalyze_functions, patch
+
+VER="0.3"
+
+# ALLOWED_TRANSFORMS = ['equiv', 'swap', 'preserv', \
+#                       'reorder', 'disp', 'semnops']
+ALLOWED_TRANSFORMS = ['disp', 'semnops']
+print('******* Allowed transformations: %s *******'%ALLOWED_TRANSFORMS)
+
+def randomize(input_file, n_randomize=10):
+  pe_file, epilog = peLib.read_pe(input_file)
+
+  # init DispState
+  disp_state = disp.DispState(pe_file)
+  
+  # get the changed byte sets
+  functions = inp.get_functions(input_file)
+  levels = func.classify_functions(functions)
+  func.analyze_functions(functions, levels)
+
+  # see what happens when randomizing again and again and again...
+  for i_r in range(n_randomize):
+  
+    global_diffs = []
+    changed_bytes = set()
+    changed_insts = set()
+
+    # transform counts
+    transform_counts = [0]*len(ALLOWED_TRANSFORMS)
+
+    for f in filter(lambda x: x.level != -1, functions.itervalues()):
+      
+      # skip the SEH prolog and epilog functions .. they cause trouble
+      if "_SEH_" in f.name:  
+        continue
+      
+      selected_transform = random.choice(ALLOWED_TRANSFORMS)
+      transform_counts[ALLOWED_TRANSFORMS.index(selected_transform)] += 1
+      
+      if selected_transform=='equiv': # equivs
+        diffs, c_b, c_i = equiv.do_equiv_instrs(f, p=0.5)
+        if diffs:
+          changed_bytes.update(c_b)
+          changed_insts.update(c_i)
+          global_diffs.extend(diffs)
+          patch(pe_file, disp_state, diffs)
+      elif selected_transform=='swap': # swaps
+        swap.liveness_analysis(f.code)
+        live_regs = swap.get_reg_live_subsets(f.instrs, f.code, f.igraph)
+        swaps = swap.get_reg_swaps(live_regs)
+        diffs, c_b, c_i = swap.do_multiple_swaps(f, swaps, p=0.5)
+        if diffs:
+          changed_bytes.update(c_b)
+          changed_insts.update(c_i)
+          global_diffs.extend(diffs)
+          patch(pe_file, disp_state, diffs)
+      elif selected_transform=='preserv': # preservs
+        preservs, avail_regs = preserv.get_reg_preservations(f)
+        diffs, c_b, c_i = preserv.do_reg_preservs(f, preservs, avail_regs, p=0.5)
+        if diffs:
+          changed_bytes.update(c_b)
+          changed_insts.update(c_i)
+          global_diffs.extend(diffs)
+          patch(pe_file, disp_state, diffs)
+      elif selected_transform=='reorder': # reorders
+        diffs, c_b = reorder.do_random_reordering(f, pe_file)
+        if diffs:
+          changed_bytes.update(c_b)
+          global_diffs.extend(diffs)
+          patch(pe_file, disp_state, diffs)
+      elif selected_transform=='disp': # displacements
+        diffs, c_b, c_i = disp.displace_block(f, disp_state)
+        if diffs:
+          changed_bytes.update(c_b)
+          changed_insts.update(c_i)
+          global_diffs.extend(diffs)
+          patch(pe_file, disp_state, diffs)
+      elif selected_transform=='semnops': # semantic nops
+        diffs, c_b = semnops.do_semnops(f)
+        if diffs:
+          changed_bytes.update(c_b)
+          global_diffs.extend(diffs)
+          patch(pe_file, disp_state, diffs)
+      else:
+        raise ValueError('Unknown transform type: %s'%transform)
+
+    # update
+    print '[iter %d]'%i_r
+    print 'changed %d bytes (and %d instructions)'\
+      %(len(changed_bytes),len(changed_insts))
+    print 'transformation counts: %s'%transform_counts
+    
+    # reanalyze functions (if not the last iteration)
+    if i_r<n_randomize-1:
+      reanalyze_functions(functions, levels)
+
+  # add displacements to the pe
+  adj_pe = peLib.AdjustPE(pe_file)
+  adj_pe.update_displacement(disp_state)
+
+  # write output
+  output_file = input_file.replace(".exe", "") + "_patched-w-compositions.exe"
+  peLib.write_pe(output_file, pe_file, epilog)
+  pe_file.close()
+
+  # if need to merge with /tmp/reloc.data
+  if disp_state.peinfo.getRelocationSize()>0:
+    disp._merge_file(output_file)
+     
+if __name__=="__main__":
+  binary_paths = [\
+                  'test/caffeine/caffeine.exe', \
+                  'test/checksum-cygwin/cksum.exe', \
+                  'test/diff-cygwin/diff.exe', \
+                  'test/find-cygwin/find.exe', \
+                  'test/grep-cygwin/grep.exe', \
+                  'test/info-cygwin/info.exe', \
+                  'test/less-cygwin/less.exe', \
+                  'test/mv-cygwin/mv.exe', \
+                  'test/pip/pip.exe', \
+                  'test/python/python.exe'
+                 ]
+  # import os
+  # mal_dir = '../../data/virusshare-samples/samples/'
+  # bin_names = os.listdir(mal_dir)
+  # binary_paths = [os.path.join(mal_dir, bin_name, bin_name) for bin_name in bin_names]
+  for bin_path in binary_paths:
+    print('====================')
+    print('Randomizing "%s"...'%(bin_path))
+    randomize(bin_path, n_randomize=10)
