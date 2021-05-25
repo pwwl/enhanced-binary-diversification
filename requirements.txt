@@ -6,6 +6,7 @@ capstone==4.0.1
 certifi==2019.3.9
 chardet==3.0.4
 cleverhans==3.0.1
+dm-tree==0.1.5
 enum34==1.1.6
 funcsigs==1.0.2
 future==0.17.1
