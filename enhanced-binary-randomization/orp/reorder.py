@@ -21,6 +21,19 @@ from collections import deque
 
 import random
 
+def BuildDegenerateDAG(bb):
+  # generate a straight-line DAG for a BB
+  dependence_graph = digraph()
+  if len(bb.instrs) == 0:
+    return dependence_graph
+
+  dependence_graph.add_node(bb.instrs[0])
+  for j in range(1, len(bb.instrs)):
+    dependence_graph.add_node(bb.instrs[j])
+    dependence_graph.add_edge((bb.instrs[j - 1], bb.instrs[j]))
+
+  return dependence_graph
+
 def BuildBBDependenceDAG(bb):
   """Computes the dependence graph of a basic block."""
 
@@ -33,15 +46,25 @@ def BuildBBDependenceDAG(bb):
   reachable_fwd = {}
   reachable_bkwd = {}
 
-  for j in bb.instrs:
+  size = len(bb.instrs)
+  # memory use to derive the DAG is like
+  # size * size * 20 * 2 bytes
+  # Set an arbitrary limit of instructions, after which
+  # we just return a straight-line DAG to the caller
+  if size > 5000:
+      return BuildDegenerateDAG(bb)
+
+  for j in range(size):
+    #print "bb.instrs.size:", len(bb.instrs), "pos:", j
     #print "\n",j, j.op2.type
-    dependence_graph.add_node(j)
+    dependence_graph.add_node(bb.instrs[j])
+    # conflicting with j i guess
     conflict = set()
 
     # Find which of the instructions already in the DAG conflict with j.
     # Check instructions in reverse order to eliminate redundand dependencies
-    for k in reversed(bb.instrs[:bb.instrs.index(j)]):
-      dependency = Conflict(k, j)
+    for k in reversed(range(j)):
+      dependency = Conflict(bb.instrs[k], bb.instrs[j])
       #print "dependency", k, '->', j, ':', dependency
       if not dependency:
         continue
@@ -51,7 +74,7 @@ def BuildBBDependenceDAG(bb):
         continue
       conflict.add(k)
 
-      dependence_graph.add_edge((k, j))   # Add an edge for this conflict
+      dependence_graph.add_edge((bb.instrs[k], bb.instrs[j]))   # Add an edge for this conflict
 
       # Update reachability information
       reachable_fwd.setdefault(k, set()).add(j)
@@ -329,7 +352,7 @@ def can_reorder(f):
         if not dag.node_incidence[m]:
           roots.append(m)
   
-  del dag
+    del dag
   return False
 
 # _xxxrelocations = None

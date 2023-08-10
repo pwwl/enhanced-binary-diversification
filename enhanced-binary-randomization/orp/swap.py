@@ -181,16 +181,25 @@ def liveness_analysis(code):
   convergence = False
   i = 0
 
+  # def[n] = registers written
+  # use[n] = registers read
+  # in[n] = a register is live in if in use[n] or ...
+  # out[n] = a register is live out if it is live in at a successor
   for ins in code.itervalues():
     ins.IN = set()
     ins.OUT = set()
   
   while not convergence:
     i += 1
-    for ins in code.itervalues():
+    # The algorithm converges very fast if we consider the CFG nodes
+    # in the reverse order (when is possible), ie, in the order 6, 5,
+    # 4, 3, 2, 1. See Table 10.6 in the textbook for an example.
+    # Leonidas Fegaras
+    # (https://lambda.uta.edu/cse5317/notes/node40.html)
+    for ins in reversed(code.values()):
       ins.IN_old = ins.IN.copy()
       ins.OUT_old = ins.OUT.copy()
-      # out[n] = U_{s is successor of n} in[n]
+      # out[n] = U_{s is successor of n} in[s]
       ins.OUT = reduce(lambda x, y: x | y, [code[s].IN for s in ins.succ], set())
       # ins[n] = use[n] U (out[n] - def[n])
       if ins.mnem=='call':

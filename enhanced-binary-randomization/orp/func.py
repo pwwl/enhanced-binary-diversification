@@ -13,16 +13,37 @@ from pygraph.algorithms.searching import depth_first_search
 from pygraph.algorithms.searching import breadth_first_search
 from pygraph.algorithms.filters.null import null as null_filter
 
-
+# use = load
+# def = store
+# for every node, union use_regs with (intersect all_regs with that node's USE)
+# then remove that node's DEF from all_regs
+# at last, use_regs will be a subset of all_regs (at initialisation)
+# and all_regs also, but could be null
+# users of this seem to only care about use_regs
+# init takes a helper dict {addr -> register set} to short
+# circuit traversals through previously traversed subgraphs
 class _use_filter(null_filter):
 
-  def __init__(self):
+  def __init__(self, helperdict = {}):
     self.use_regs = set()
+    # only the traditional 386 regs
     self.all_regs = set(insn.REGS[:8])
-  
+    self.helperdict = helperdict
+    #self.stop = False
+
+  # was heavily used
+  # call self, node, parent
+  # other and node are Instructions
+  # uses the provided helper dict to short circuit traversals through
+  # previously traversed subgraphs
   def __call__(self, other, node):
+    if (other.addr in self.helperdict):
+      self.use_regs |= self.helperdict[other.addr]
+      return False
+
     self.use_regs |= (self.all_regs & other.USE)
     self.all_regs -= other.DEF
+
     return True
 
 
@@ -167,6 +188,10 @@ class Function(object):
         elif (ins.mnem == "push" and ins.op1.type == insn.Operand.REGISTER and
               len(ins.USE & use_f.use_regs) > 1): #esp is always in there..
           pushes.append(ins)
+
+      # keep track of the BFS result, which only depends on pop and reg,
+      # not on the outer pushes loop
+      last_ins_by_pop_and_reg = {}
       for push in pushes:
         # is there any case to have 'push esp' !?
         if len(push.USE) != 2 or "esp" not in push.USE:
@@ -180,9 +205,14 @@ class Function(object):
           continue
         true_reg_pops = []
         for pop in reg_pops:
-          def_f = _def_filter(reg)
-          st, order = breadth_first_search(self.igraph, pop, def_f)
-          if def_f.last_ins.mnem not in ("ret", "retn", "jmp"): # nooo
+          if (pop,reg) in last_ins_by_pop_and_reg:
+            last_ins = last_ins_by_pop_and_reg[(pop, reg)]
+          else:
+            def_f = _def_filter(reg)
+            st, order = breadth_first_search(self.igraph, pop, def_f)
+            last_ins_by_pop_and_reg[(pop, reg)] = def_f.last_ins
+            last_ins = def_f.last_ins
+          if last_ins.mnem not in ("ret", "retn", "jmp"): # nooo
             #print "break for", pop, "at", def_f.last_ins
             continue
           true_reg_pops.append(pop)
@@ -205,10 +235,11 @@ class Function(object):
       print "BUG: how can arg_regs not be subset of touched?", self
 
     # final set (and most difficult) the return-value registers
+    subtree_dict = {}
     for ref, func_ea in self.code_refs_to:
       try:
         func = functions[func_ea]
-        use_f = _use_filter()
+        use_f = _use_filter(subtree_dict)
         #XXX: be careful!, a reg might be used after a call instrs .. we have
         # to check in that case if this is a return value of this function or
         # of the other (a third one)
@@ -216,6 +247,8 @@ class Function(object):
         # CodeXfers to unanalyzed function
         st, order = breadth_first_search(func.igraph, func.code[ref], use_f)
         #self.ret_regs.append(use_f.use_regs & self.touches)
+        # save the raw result for future use
+        subtree_dict[ref] = use_f.use_regs
         self.ret_regs |= (use_f.use_regs & self.touches)
       except KeyError, e:
         pass

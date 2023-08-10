@@ -33,6 +33,26 @@ ALLOWED_TRANSFORMS = ['equiv', 'swap', 'preserv', \
 # ALLOWED_TRANSFORMS = ['disp', 'semnops']
 print('******* Allowed transformations: %s *******'%ALLOWED_TRANSFORMS)
 
+def find_duplicate_bytes(functions):
+    """
+    Find duplicate bytes in functions
+    """
+    insn_set = set()
+    dup_bytes = set()
+    # find duplicate bytes in functions
+    for f_key in functions.keys():
+        f = functions[f_key]
+        # skip the SEH prolog and epilog functions .. they cause trouble
+        if f.level == -1 or "_SEH_" in f.name:
+            continue
+        for i in f.instrs:
+            if i.addr in insn_set:
+                for j in range(len(i.bytes)):
+                    dup_bytes.add(i.addr + j)
+            else:
+                insn_set.add(i.addr)
+    return dup_bytes
+
 def randomize(input_file, n_randomize=10):
   pe_file, epilog = peLib.read_pe(input_file)
 
@@ -43,6 +63,9 @@ def randomize(input_file, n_randomize=10):
   functions = inp.get_functions(input_file)
   levels = func.classify_functions(functions)
   func.analyze_functions(functions, levels)
+
+  # find duplicate bytes in functions
+  dup_bytes = find_duplicate_bytes(functions)
 
   # see what happens when randomizing again and again and again...
   for i_r in range(n_randomize):
@@ -58,6 +81,15 @@ def randomize(input_file, n_randomize=10):
       
       # skip the SEH prolog and epilog functions .. they cause trouble
       if "_SEH_" in f.name:  
+        continue
+      
+      # check for duplicate ref bytes in this function, skip if found
+      dup_bytes_in_f = False
+      for i in f.instrs:
+        if i.addr in dup_bytes:
+          dup_bytes_in_f = True
+          break
+      if dup_bytes_in_f:
         continue
       
       selected_transform = random.choice(ALLOWED_TRANSFORMS)

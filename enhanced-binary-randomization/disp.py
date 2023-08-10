@@ -15,6 +15,7 @@ import math
 import inp
 import func
 from randtoolkit import patch
+import logging
 
 # opcodes using addresses relative to EIP
 # (taken from Koo and Polychronakis)
@@ -82,47 +83,89 @@ def _displaceable_instrs(block, max_bytes=None):
     """
     
     # sort instructions by their addresses
+
     instrs = block.instrs
     instrs.sort(key=lambda ins: ins.addr)
+    ninstrs = len(instrs)
+
+    # XXXstroucki len and haveattr were hot
+    # helperlist is array of tuple
+    # tuple is (_is_displaced(ins) or _non_displaceable(ins) bool,
+    # len(bytes) int)
+    helperlist = []
+    for i0 in range(ninstrs):
+      ins = instrs[i0]
+      first = _is_displaced(ins) or _non_displaceable(ins)
+      second = len(ins.bytes)
+      helperlist.append((first, second)) 
 
     displaceable = []
-    for i0 in range(len(instrs)):
+
+    # keep track of the previous max offset and byte length
+    prev_i2 = 0
+    prev_s = 0
+
+    for i0 in range(ninstrs):
         ins = instrs[i0]
-        if _is_displaced(ins) or _non_displaceable(ins):
+        is_not_candidate, inslen = helperlist[i0]
+        if is_not_candidate:
             continue
+
+        # XXXstroucki still kind of lame.
+        # if i0_0 + 10 is min, i0_1 + 9 should become
+        # min next
+        # but just optimizing the calculation of max has
+        # saved almost 100% of time on binary d1e286
 
         # find min (if any)
         i1 = 1
-        s = len(ins.bytes)
-        while i0+i1<len(instrs) and s<5:
+        s = inslen
+        while i0+i1<ninstrs and s<5:
             ins = instrs[i0+i1]
-            if _is_displaced(ins) or _non_displaceable(ins):
+            is_not_candidate, inslen = helperlist[i0+i1]
+            if is_not_candidate:
                 break
-            if (not max_bytes is None) and s+len(ins.bytes)>max_bytes:
+            if (not max_bytes is None) and s+inslen>max_bytes:
                 break
-            s += len(ins.bytes)
+            s += inslen
             i1 += 1
-            
+
         # if couldn't find at least 5-bytes-long, consecutive
         # instructions starting at i0 that are possible to
         # displace, then skip
         if s<5:
             continue
-        
+
         # find max
-        i2 = i1 + 1
-        while i0+i2<=len(instrs):
-            ins = instrs[i0+i2-1]
-            if _is_displaced(ins) or _non_displaceable(ins):
-                break
-            s += len(ins.bytes)
-            i2 += 1
-        i2 -= 1
-        
+        # decrease our max offset from last iteration by 1
+        i2 = prev_i2 - 1
+        # if the min offset has reached max, then recalculate
+        # max
+        if i2 < i1:
+            i2 = i1
+            while i0+i2<ninstrs:
+                ins = instrs[i0+i2]
+                is_not_candidate, inslen = helperlist[i0+i2]
+                if is_not_candidate:
+                    break
+                s += inslen
+                i2 += 1
+        else:
+            s = prev_s
+            # remove the length of the first instruction
+            # in the previous iteration
+            _, inslen = helperlist[i0-1]
+            s -= inslen
+
+        prev_s = s
+        prev_i2 = i2
+
         # update displaceable
+        #print i0, i1, i2, s
         displaceable.append((i0,i1,i2,s))
-        
+
     # done
+    #print "ret"
     return displaceable
 
 def _compute_diffs(instrs, fill_bytes):
@@ -333,6 +376,10 @@ def displace_w_budget(functions, disp_state, budget, min_dpf=200, max_disp_instr
             if displaceable:
                 ndf += 1
                 break
+    # account for the case where ndf=0
+    if ndf < 1:
+        logging.warning('No displaceable functions found!')
+        return []
     avg_bpf = int(math.ceil(budget/ndf)) # budget per function
 
     # update min_dpf
