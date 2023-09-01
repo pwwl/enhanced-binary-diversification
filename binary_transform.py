@@ -29,8 +29,14 @@ from randtoolkit import reanalyze_functions, patch
 import argparse
 
 ALLOWED_TRANSFORMS = ['equiv', 'swap', 'preserv', \
-                      'reorder', 'disp', 'semnops']
-# ALLOWED_TRANSFORMS = ['disp', 'semnops']
+                      'reorder', 'disp', 'semnops'] # IPR + Disp
+# ALLOWED_TRANSFORMS = ['disp', 'semnops'] # Disp
+# ALLOWED_TRANSFORMS = ['equiv', 'swap', 'preserv', 'reorder'] # IPR
+
+# ensure that the allowed transforms either have both disp and semnops or neither
+assert ('disp' in ALLOWED_TRANSFORMS and 'semnops' in ALLOWED_TRANSFORMS) or \
+       ('disp' not in ALLOWED_TRANSFORMS and 'semnops' not in ALLOWED_TRANSFORMS)
+
 print('******* Allowed transformations: %s *******'%ALLOWED_TRANSFORMS)
 
 def find_duplicate_bytes(functions):
@@ -57,7 +63,10 @@ def randomize(input_file, n_randomize=10):
   pe_file, epilog = peLib.read_pe(input_file)
 
   # init DispState
-  disp_state = disp.DispState(pe_file)
+  if 'disp' in ALLOWED_TRANSFORMS:
+    disp_state = disp.DispState(pe_file)
+  else:
+    disp_state = None
   
   # get the changed byte sets
   functions = inp.get_functions(input_file)
@@ -152,9 +161,10 @@ def randomize(input_file, n_randomize=10):
     if i_r<n_randomize-1:
       reanalyze_functions(functions, levels)
 
-  # add displacements to the pe
-  adj_pe = peLib.AdjustPE(pe_file)
-  adj_pe.update_displacement(disp_state)
+  if disp_state is not None:
+    # add displacements to the pe
+    adj_pe = peLib.AdjustPE(pe_file)
+    adj_pe.update_displacement(disp_state)
 
   # write output
   output_file = input_file.replace(".exe", "") + "_patched-w-compositions.exe"
@@ -163,7 +173,7 @@ def randomize(input_file, n_randomize=10):
   pe_file.close()
 
   # if need to merge with /tmp/reloc.data
-  if disp_state.peinfo.getRelocationSize()>0:
+  if disp_state is not None and disp_state.peinfo.getRelocationSize()>0:
     disp._merge_file(output_file)
 
   # print hash before and after randomization
