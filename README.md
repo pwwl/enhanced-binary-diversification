@@ -75,11 +75,21 @@ the following papers:
   booktitle={Asia Conference on Computer and Communications Security (AsiaCCS)},
   year={2021}
 }
+
+@inproceedings{Lucas23,
+  title = {Adversarial training for raw-binary malware classifiers},
+  author = {Keane Lucas and Samruddhi Pai and Weiran Lin and Lujo Bauer and Michael K. Reiter and Mahmood Sharif},
+  booktitle = {Proceedings of the 32nd USENIX Security Symposium},
+  month = aug,
+  year = 2023,
+}
 ```
 
 ## Collaborators
 
 * Keane Lucas (keanelucas@cmu.edu)
+* Weiran Lin (weiranl@andrew.cmu.edu)
+* Samruddhi Pai (sdpai@andrew.cmu.edu)
 * Mahmood Sharif (mahmoods@alumni.cmu.edu)
 * Lujo Bauer (lbauer@cmu.edu)
 * Michael K. Reiter (michael.reiter@duke.edu)
